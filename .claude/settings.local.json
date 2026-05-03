@@ -10,7 +10,9 @@
       "Bash(git init *)",
       "Bash(git add *)",
       "Bash(git config *)",
-      "Bash(git commit -m 'Initial commit: Jaxx World M1-M6 complete *)"
+      "Bash(git commit -m 'Initial commit: Jaxx World M1-M6 complete *)",
+      "Bash(gh repo *)",
+      "Bash(node -e ' *)"
     ]
   }
 }

@@ -23,6 +23,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <!-- iPad / tablet support: fill the viewport, no zoom, no pull-to-refresh -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
   <title>Jaxx World</title>
 
   <!-- Fredoka One — rounded, fun display font for the whole game UI -->
@@ -270,6 +275,138 @@
     }
     #crosshair::before { left: 7px; top: 0;  width: 2px; height: 16px; }
     #crosshair::after  { left: 0;  top: 7px; width: 16px; height: 2px; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       TABLET / TOUCH OPTIMISATION
+       Everything below activates only when body has the .touch class
+       (set at startup if the device reports any touch capability). On
+       desktop the touch UI stays hidden so nothing changes for mouse users.
+    ══════════════════════════════════════════════════════════════════ */
+    /* Stop iOS rubber-band scroll, double-tap zoom, long-press callouts */
+    html, body {
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none;
+    }
+    body { touch-action: none; }
+
+    /* Helpers to swap copy between desktop and touch */
+    .touch-only   { display: none; }
+    body.touch .desktop-only { display: none; }
+    body.touch .touch-only   { display: block; }
+
+    /* ── Virtual joystick (bottom-left) ─────────────────────────────── */
+    #joystick {
+      position: fixed;
+      left: env(safe-area-inset-left, 24px);
+      bottom: calc(110px + env(safe-area-inset-bottom, 0px));
+      margin-left: 24px;
+      width: 140px; height: 140px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.30);
+      border: 3px solid rgba(255, 255, 255, 0.32);
+      display: none;
+      z-index: 20;
+      touch-action: none;
+    }
+    body.touch #joystick { display: block; }
+    #joystick-knob {
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 64px; height: 64px;
+      margin-left: -32px; margin-top: -32px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.85);
+      border: 3px solid rgba(0, 0, 0, 0.35);
+      pointer-events: none;
+      transition: transform 50ms;
+    }
+
+    /* ── Touch action buttons (bottom-right) — break / place / jump ── */
+    #touch-actions {
+      position: fixed;
+      right: env(safe-area-inset-right, 24px);
+      bottom: calc(110px + env(safe-area-inset-bottom, 0px));
+      margin-right: 24px;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      z-index: 20;
+      touch-action: none;
+    }
+    body.touch #touch-actions { display: flex; }
+    .touch-btn {
+      width: 76px; height: 76px;
+      border-radius: 50%;
+      border: 3px solid rgba(255, 255, 255, 0.45);
+      background: rgba(0, 0, 0, 0.50);
+      color: white;
+      font-size: 30px;
+      cursor: pointer;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-game);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      transition: transform 80ms, background 80ms;
+    }
+    .touch-btn:active { transform: scale(0.92); background: rgba(255,255,255,0.18); }
+    #touch-break-btn { background: rgba(180, 60, 60, 0.55); }
+    #touch-place-btn { background: rgba(60, 130, 200, 0.55); }
+    #touch-jump-btn  { background: rgba(80, 160, 80, 0.55); width: 84px; height: 84px; font-size: 22px; }
+
+    /* ── Pause / day-night buttons (top-left, touch only) ─────────── */
+    #touch-topleft {
+      position: fixed;
+      top: calc(14px + env(safe-area-inset-top, 0px));
+      left: calc(14px + env(safe-area-inset-left, 0px));
+      display: none;
+      flex-direction: row;
+      gap: 8px;
+      z-index: 60;
+    }
+    body.touch #touch-topleft { display: flex; }
+    #touch-topleft button {
+      padding: 0;
+      width: 50px; height: 50px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 2px solid rgba(255, 255, 255, 0.32);
+      color: white;
+      font-family: var(--font-game);
+      font-size: 22px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    /* ── On touch: bigger top-right buttons, tappable hotbar ───────── */
+    body.touch #actions button {
+      padding: 12px 18px;
+      font-size: 16px;
+      min-height: 50px;
+    }
+    body.touch #screenshot-btn { padding: 12px 16px; font-size: 22px; }
+    body.touch #hotbar { pointer-events: auto; }
+    body.touch .slot {
+      width: 64px; height: 78px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body.touch .slot .swatch { width: 40px; height: 40px; }
+
+    /* Pause overlay copy: read "Tap" instead of "Click" on touch */
+    body.touch #overlay .desktop-text { display: none; }
+    body.touch #overlay .touch-text   { display: inline; }
+    .touch-text { display: none; }
+
+    /* The crosshair is less useful when you tap action buttons rather
+       than aim with a mouse — keep it but make it slightly larger. */
+    body.touch #crosshair { width: 22px; height: 22px; margin-left: -11px; margin-top: -11px; }
+    body.touch #crosshair::before { left: 10px; height: 22px; }
+    body.touch #crosshair::after  { top: 10px; width: 22px; }
   </style>
 
   <!-- SimplexNoise for terrain generation (pinned version) -->
@@ -291,15 +428,21 @@
     <div id="game-logo">Jaxx World</div>
     <div id="welcome-msg">Welcome, Jaxx! 🚀</div>
     <button id="play-btn" type="button">▶ Play</button>
-    <div id="title-controls">
+    <div id="title-controls" class="desktop-only">
       WASD to move &nbsp;·&nbsp; Space to jump &nbsp;·&nbsp; Mouse to look &nbsp;·&nbsp; Esc to pause &nbsp;·&nbsp; N for day/night &nbsp;·&nbsp; F2 for screenshot
+    </div>
+    <div id="title-controls" class="touch-only">
+      Joystick to move &nbsp;·&nbsp; Drag to look &nbsp;·&nbsp; ⛏ break &nbsp;·&nbsp; ⬛ place &nbsp;·&nbsp; ⤴ jump
     </div>
   </div>
 
   <!-- ── PAUSE OVERLAY ── shown when Esc releases the pointer ───── -->
   <div id="overlay" class="hidden">
-    ⏸ Paused — Click to Resume
-    <small>Mouse released · click anywhere to keep building</small>
+    ⏸ Paused — <span class="desktop-text">Click</span><span class="touch-text">Tap</span> to Resume
+    <small>
+      <span class="desktop-text">Mouse released · click anywhere to keep building</span>
+      <span class="touch-text">Tap anywhere to keep building</span>
+    </small>
   </div>
 
   <!-- Crosshair at screen centre -->
@@ -318,6 +461,25 @@
     <button id="new-btn"        type="button">🌱 New World</button>
   </div>
   <div id="toast"></div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       TABLET / TOUCH HUD — hidden by default, shown when body.touch
+  ══════════════════════════════════════════════════════════════════ -->
+  <!-- Top-left: pause + day/night buttons (touch only) -->
+  <div id="touch-topleft">
+    <button id="touch-pause-btn"  type="button" title="Pause">⏸</button>
+    <button id="touch-day-btn"    type="button" title="Toggle day/night">☀️</button>
+  </div>
+
+  <!-- Bottom-left: virtual joystick -->
+  <div id="joystick"><div id="joystick-knob"></div></div>
+
+  <!-- Bottom-right: action buttons (jump on top, place + break below) -->
+  <div id="touch-actions">
+    <button id="touch-jump-btn"  class="touch-btn" type="button" title="Jump">⤴</button>
+    <button id="touch-place-btn" class="touch-btn" type="button" title="Place">⬛</button>
+    <button id="touch-break-btn" class="touch-btn" type="button" title="Break">⛏</button>
+  </div>
 
   <script type="module">
     import * as THREE from 'three';
@@ -481,6 +643,8 @@
       `;
       hotbarEl.appendChild(slot);
       slotEls.set(blockId, slot);
+      // Tap-to-select for touch devices (pointer-events enabled via .touch CSS)
+      slot.addEventListener('click', () => setSelectedBlock(blockId));
     }
 
     // Block-name toast: fades in above hotbar on block switch, fades out after 1.2 s.
@@ -860,7 +1024,8 @@
       if (recipe) recipe();
     }
 
-    window.addEventListener('mousedown', () => ensureAudio(), { once: true });
+    // pointerdown covers mouse, touch, and pen — so iPad gets audio too
+    window.addEventListener('pointerdown', () => ensureAudio(), { once: true });
 
     // ── Targeting ────────────────────────────────────────────────────
     const REACH        = 5;
@@ -923,14 +1088,30 @@
     const overlay     = document.getElementById('overlay');
     const canvas      = renderer.domElement;
 
+    // ── Touch / tablet device detection ────────────────────────────
+    // Set the body class so all the .touch CSS rules turn on. We check
+    // for any touch capability — covers iPad, Android tablets, hybrid
+    // laptops with touchscreens. On a hybrid the mouse path keeps working;
+    // touch path simply becomes available as well.
+    const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    if (hasTouch) document.body.classList.add('touch');
+
     document.getElementById('play-btn').addEventListener('click', () => {
       titleScreen.classList.add('hidden');
       gameStarted = true;
-      canvas.requestPointerLock();
+      // Pointer lock is a desktop-only concept; iPad Safari has no lockable
+      // pointer. Skip it on touch devices so we don't trigger an error toast.
+      if (!hasTouch) canvas.requestPointerLock();
     });
 
     overlay.addEventListener('click', () => {
-      if (gameStarted) canvas.requestPointerLock();
+      if (!gameStarted) return;
+      if (hasTouch) {
+        // Touch: just hide the pause overlay, no pointer to lock
+        overlay.classList.add('hidden');
+      } else {
+        canvas.requestPointerLock();
+      }
     });
 
     canvas.addEventListener('mousedown', (e) => {
@@ -1009,6 +1190,179 @@
 
     window.addEventListener('blur', () => {
       for (const k in keys) keys[k] = false;
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    // TOUCH INPUT — virtual joystick, look-by-drag, action buttons
+    // (No-ops on desktop because the touch UI elements are display:none.)
+    // ══════════════════════════════════════════════════════════════════
+
+    // Analog joystick output, consumed by the render loop alongside WASD.
+    const joystick = { x: 0, y: 0 };           // each component in -1..1
+    const JOYSTICK_RADIUS = 50;                // max knob travel from centre
+    const TOUCH_LOOK_SENSITIVITY = 0.005;      // higher than mouse — fingers move slower
+
+    const joystickEl     = document.getElementById('joystick');
+    const knobEl         = document.getElementById('joystick-knob');
+    const touchActionsEl = document.getElementById('touch-actions');
+    const touchTopLeftEl = document.getElementById('touch-topleft');
+    const touchBreakBtn  = document.getElementById('touch-break-btn');
+    const touchPlaceBtn  = document.getElementById('touch-place-btn');
+    const touchJumpBtn   = document.getElementById('touch-jump-btn');
+    const touchPauseBtn  = document.getElementById('touch-pause-btn');
+    const touchDayBtn    = document.getElementById('touch-day-btn');
+    const actionsEl      = document.getElementById('actions');
+
+    // Track active touches by identifier so multiple fingers don't collide.
+    let joystickTouchId = null;
+    let lookTouchId     = null;
+    let joystickCenterX = 0, joystickCenterY = 0;
+    let lookLastX = 0,       lookLastY = 0;
+
+    function isInsideEl(el, x, y) {
+      if (!el) return false;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none') return false;
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    }
+
+    function startJoystick(t) {
+      const r = joystickEl.getBoundingClientRect();
+      joystickCenterX = r.left + r.width  / 2;
+      joystickCenterY = r.top  + r.height / 2;
+      joystickTouchId = t.identifier;
+      updateJoystick(t);
+    }
+    function updateJoystick(t) {
+      let dx = t.clientX - joystickCenterX;
+      let dy = t.clientY - joystickCenterY;
+      const dist = Math.hypot(dx, dy);
+      if (dist > JOYSTICK_RADIUS) {
+        const k = JOYSTICK_RADIUS / dist;
+        dx *= k; dy *= k;
+      }
+      joystick.x =  dx / JOYSTICK_RADIUS;
+      joystick.y = -dy / JOYSTICK_RADIUS;     // screen Y is inverted; up = forward
+      knobEl.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+    function endJoystick() {
+      joystickTouchId = null;
+      joystick.x = 0;
+      joystick.y = 0;
+      knobEl.style.transform = '';
+    }
+
+    function startLook(t) {
+      lookTouchId = t.identifier;
+      lookLastX = t.clientX;
+      lookLastY = t.clientY;
+    }
+    function updateLook(t) {
+      const dx = t.clientX - lookLastX;
+      const dy = t.clientY - lookLastY;
+      yaw   -= dx * TOUCH_LOOK_SENSITIVITY;
+      pitch -= dy * TOUCH_LOOK_SENSITIVITY;
+      if (pitch >  PITCH_LIMIT) pitch =  PITCH_LIMIT;
+      if (pitch < -PITCH_LIMIT) pitch = -PITCH_LIMIT;
+      lookLastX = t.clientX;
+      lookLastY = t.clientY;
+    }
+    function endLook() { lookTouchId = null; }
+
+    // List of UI elements that should NOT trigger a look drag when touched.
+    // (They have their own click handlers that fire normally.)
+    function isOnUI(x, y) {
+      return isInsideEl(touchActionsEl, x, y) ||
+             isInsideEl(touchTopLeftEl, x, y) ||
+             isInsideEl(actionsEl,      x, y) ||
+             isInsideEl(hotbarEl,       x, y) ||
+             isInsideEl(overlay,        x, y) ||
+             isInsideEl(titleScreen,    x, y);
+    }
+
+    document.addEventListener('touchstart', (e) => {
+      if (!gameStarted) return;
+      let consume = false;
+      for (const t of e.changedTouches) {
+        // Joystick area takes priority
+        if (joystickTouchId === null && isInsideEl(joystickEl, t.clientX, t.clientY)) {
+          startJoystick(t);
+          consume = true;
+          continue;
+        }
+        // Buttons & hotbar handle their own clicks — don't intercept
+        if (isOnUI(t.clientX, t.clientY)) continue;
+        // Anywhere else = look drag
+        if (lookTouchId === null) {
+          startLook(t);
+          consume = true;
+        }
+      }
+      // preventDefault stops iOS from synthesising mouse events / scrolling
+      if (consume) e.preventDefault();
+    }, { passive: false });
+
+    document.addEventListener('touchmove', (e) => {
+      let consume = false;
+      for (const t of e.changedTouches) {
+        if (t.identifier === joystickTouchId) { updateJoystick(t); consume = true; }
+        else if (t.identifier === lookTouchId) { updateLook(t);   consume = true; }
+      }
+      if (consume) e.preventDefault();
+    }, { passive: false });
+
+    function handleTouchEnd(e) {
+      for (const t of e.changedTouches) {
+        if (t.identifier === joystickTouchId) endJoystick();
+        if (t.identifier === lookTouchId)     endLook();
+      }
+    }
+    document.addEventListener('touchend',    handleTouchEnd);
+    document.addEventListener('touchcancel', handleTouchEnd);
+
+    // ── Touch action button handlers ─────────────────────────────────
+    // BREAK — same logic as left-click in the canvas mousedown handler
+    touchBreakBtn.addEventListener('click', () => {
+      if (!gameStarted || !targetedBlock) return;
+      highlight.visible = false;
+      const { x, y, z, blockId: brokenId } = targetedBlock;
+      removeBlock(x, y, z);
+      targetedBlock = null;
+      playSound(BLOCKS[brokenId].breakSound);
+    });
+
+    // PLACE — same logic as right-click
+    touchPlaceBtn.addEventListener('click', () => {
+      if (!gameStarted) return;
+      const before = blockMap.size;
+      placeBlock();
+      if (blockMap.size > before) playSound(BLOCKS[selectedBlockId].placeSound);
+    });
+
+    // JUMP — flag the spacebar press; the render loop consumes it
+    touchJumpBtn.addEventListener('click', () => {
+      if (!gameStarted) return;
+      keys[' '] = true;
+    });
+
+    // PAUSE — show the pause overlay (no pointer to release on touch)
+    touchPauseBtn.addEventListener('click', () => {
+      if (!gameStarted) return;
+      overlay.classList.remove('hidden');
+    });
+
+    // DAY/NIGHT toggle — same as the keyboard "N" shortcut
+    touchDayBtn.addEventListener('click', () => {
+      alwaysDay = !alwaysDay;
+      touchDayBtn.textContent = alwaysDay ? '🌙' : '☀️';
+      showToast(alwaysDay ? '☀️ Always Day: ON' : '🌙 Always Day: OFF');
+    });
+
+    // Suppress iOS long-press context menu globally so it can't pop up
+    // mid-gameplay (e.g. on the canvas or any button).
+    window.addEventListener('contextmenu', (e) => {
+      if (gameStarted) e.preventDefault();
     });
 
     // ── Resize ───────────────────────────────────────────────────────
@@ -1108,14 +1462,20 @@
       const pos   = camera.position;
       let   feetY = pos.y - EYE_HEIGHT;
 
+      // Combine keyboard (digital ±1) with joystick (analog -1..1).
+      // After both are added we clamp magnitude to 1 so diagonal/joystick
+      // combos don't move faster than walking forward.
       move.set(0, 0, 0);
       if (keys.w) move.add(forward);
       if (keys.s) move.sub(forward);
       if (keys.d) move.add(right);
       if (keys.a) move.sub(right);
+      if (joystick.y !== 0) move.addScaledVector(forward, joystick.y);
+      if (joystick.x !== 0) move.addScaledVector(right,   joystick.x);
 
-      if (move.lengthSq() > 0) {
-        move.normalize().multiplyScalar(MOVE_SPEED * dt);
+      if (move.lengthSq() > 0.0025) {           // ignore tiny drift (~0.05 mag)
+        if (move.lengthSq() > 1) move.normalize();
+        move.multiplyScalar(MOVE_SPEED * dt);
 
         // Try X movement independently so sliding along walls works
         if (!collidesAt(pos.x + move.x, feetY, pos.z)) {
