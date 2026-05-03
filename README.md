@@ -41,6 +41,7 @@ Then open [http://localhost:8765/game.html](http://localhost:8765/game.html)
 | Jump | ⤴ button |
 | Break / Place | ⛏ / ⬛ buttons |
 | Select block | Tap hotbar slot |
+| Photo mode | 📸 button (top-left) |
 
 ## 🧱 Block Types
 
