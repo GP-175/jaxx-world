@@ -1,0 +1,236 @@
+<!--
+  Jaxx's BlockVenture — Release v1: Foundation (M1)
+  Snapshot date: 2026-05-02
+  Tasks completed:
+    JP-28 [M1-T1] Project skeleton — Three.js loads, sky-blue scene
+    JP-29 [M1-T2] Single green cube with ambient + directional lighting
+    JP-30 [M1-T3] Flat 20x20 grass world (400 blocks, subtle checkerboard)
+    JP-31 [M1-T4] First-person WASD movement at ~4 units/sec
+    JP-32 [M1-T5] Pointer-lock mouse-look with click-to-play overlay
+    JP-33 [M1-T6] This release tag
+
+  How to run: open this file directly in Chrome. No server required.
+  Rollback safety net — do not edit. Active work continues in game.html.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Jaxx's BlockVenture</title>
+  <style>
+    /* Make the canvas fill the whole browser window with no scrollbars. */
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #87CEEB; }
+    canvas { display: block; }
+
+    /* "Click to play" overlay — shown when the pointer isn't locked. */
+    #overlay {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0, 0, 0, 0.45);
+      color: white;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 32px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      user-select: none;
+      text-align: center;
+      padding: 20px;
+    }
+    #overlay.hidden { display: none; }
+    #overlay small {
+      display: block;
+      margin-top: 12px;
+      font-size: 16px;
+      font-weight: 400;
+      opacity: 0.85;
+    }
+  </style>
+
+  <!-- Importmap: tells the browser where to find the "three" module.
+       Pinned to version 0.160.0 so future Three.js updates can't break our game. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- Click-to-play overlay. Hidden when pointer is locked. -->
+  <div id="overlay">
+    Click to play
+    <small>Move: W A S D &nbsp;·&nbsp; Look: mouse &nbsp;·&nbsp; Esc to release</small>
+  </div>
+
+  <!-- Main game script. type="module" is required for importmap to work. -->
+  <script type="module">
+    import * as THREE from 'three';
+
+    console.log('Three.js loaded', THREE.REVISION);
+
+    // ---------------------------------------------------------------------
+    // Scene, camera, renderer
+    // ---------------------------------------------------------------------
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB); // sky blue
+
+    const camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    // Eye height: blocks have their tops at y=0.5, so standing on the grass
+    // means feet at y=0.5 and eyes at roughly y = 0.5 + 1.7 = 2.2.
+    const EYE_HEIGHT = 2.2;
+    camera.position.set(0, EYE_HEIGHT, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // ---------------------------------------------------------------------
+    // Lights
+    // ---------------------------------------------------------------------
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+    sun.position.set(20, 30, 10);
+    scene.add(sun);
+
+    // ---------------------------------------------------------------------
+    // World — flat 20x20 grid of grass blocks
+    // ---------------------------------------------------------------------
+    const blockGeo = new THREE.BoxGeometry(1, 1, 1);
+    const WORLD_SIZE = 20;
+    const offset = (WORLD_SIZE - 1) / 2;
+    const grassA = 0x4CAF50;
+    const grassB = 0x43A047;
+
+    for (let x = 0; x < WORLD_SIZE; x++) {
+      for (let z = 0; z < WORLD_SIZE; z++) {
+        const isLight = (x + z) % 2 === 0;
+        const mat = new THREE.MeshStandardMaterial({
+          color: isLight ? grassA : grassB
+        });
+        const block = new THREE.Mesh(blockGeo, mat);
+        block.position.set(x - offset, 0, z - offset);
+        scene.add(block);
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Mouse-look (pointer lock) — yaw/pitch driven by mouse movement
+    // ---------------------------------------------------------------------
+    // We track the camera's rotation as two angles:
+    //   yaw   = how far left/right we're turned (around the Y axis)
+    //   pitch = how far up/down we're looking  (around the X axis)
+    // We rebuild the camera's quaternion each frame from these two values.
+    let yaw = 0;
+    let pitch = 0;
+    const PITCH_LIMIT = Math.PI / 2 - 0.01; // stop just shy of straight up/down
+    const LOOK_SENSITIVITY = 0.002;          // radians per pixel of mouse motion
+
+    const overlay = document.getElementById('overlay');
+    const canvas = renderer.domElement;
+
+    // Click anywhere on the overlay (or the canvas) to lock the pointer.
+    overlay.addEventListener('click', () => canvas.requestPointerLock());
+    canvas.addEventListener('click', () => {
+      if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
+    });
+
+    // Show/hide the overlay based on lock state. Pressing Esc unlocks
+    // automatically — the browser handles that — and this listener fires.
+    document.addEventListener('pointerlockchange', () => {
+      const locked = document.pointerLockElement === canvas;
+      overlay.classList.toggle('hidden', locked);
+    });
+
+    // While the pointer is locked, mousemove gives us movementX / movementY:
+    // raw deltas in pixels, NOT absolute screen coordinates.
+    document.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement !== canvas) return;
+      yaw   -= e.movementX * LOOK_SENSITIVITY;
+      pitch -= e.movementY * LOOK_SENSITIVITY;
+      // Clamp pitch so the player can't somersault.
+      if (pitch >  PITCH_LIMIT) pitch =  PITCH_LIMIT;
+      if (pitch < -PITCH_LIMIT) pitch = -PITCH_LIMIT;
+    });
+
+    // ---------------------------------------------------------------------
+    // Player input — track which keys are currently held
+    // ---------------------------------------------------------------------
+    const keys = { w: false, a: false, s: false, d: false };
+
+    window.addEventListener('keydown', (e) => {
+      const k = e.key.toLowerCase();
+      if (k in keys) keys[k] = true;
+    });
+    window.addEventListener('keyup', (e) => {
+      const k = e.key.toLowerCase();
+      if (k in keys) keys[k] = false;
+    });
+    window.addEventListener('blur', () => {
+      for (const k in keys) keys[k] = false;
+    });
+
+    // ---------------------------------------------------------------------
+    // Resize handling
+    // ---------------------------------------------------------------------
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ---------------------------------------------------------------------
+    // Render loop — apply look angles, then move the player
+    // ---------------------------------------------------------------------
+    const MOVE_SPEED = 4; // world units per second
+
+    const forward = new THREE.Vector3();
+    const right = new THREE.Vector3();
+    const move = new THREE.Vector3();
+    const UP = new THREE.Vector3(0, 1, 0);
+    // YXZ order means yaw (Y) is applied first, then pitch (X). This is the
+    // standard FPS setup and prevents unwanted roll.
+    const lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+    const clock = new THREE.Clock();
+
+    renderer.setAnimationLoop(() => {
+      const dt = Math.min(clock.getDelta(), 0.1);
+
+      // Apply the current yaw/pitch to the camera's rotation.
+      lookEuler.set(pitch, yaw, 0);
+      camera.quaternion.setFromEuler(lookEuler);
+
+      // Movement is on the ground plane only — get the forward direction
+      // and zero out its Y so looking up doesn't make us walk into the sky.
+      camera.getWorldDirection(forward);
+      forward.y = 0;
+      forward.normalize();
+      right.crossVectors(forward, UP).normalize();
+
+      move.set(0, 0, 0);
+      if (keys.w) move.add(forward);
+      if (keys.s) move.sub(forward);
+      if (keys.d) move.add(right);
+      if (keys.a) move.sub(right);
+
+      if (move.lengthSq() > 0) {
+        move.normalize().multiplyScalar(MOVE_SPEED * dt);
+        camera.position.add(move);
+      }
+
+      // Safety floor — keep eyes at standing height until we add gravity.
+      if (camera.position.y < EYE_HEIGHT) camera.position.y = EYE_HEIGHT;
+
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

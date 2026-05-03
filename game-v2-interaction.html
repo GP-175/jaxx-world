@@ -1,0 +1,432 @@
+<!--
+  Jaxx's BlockVenture — Release v2: Block Interaction (M2)
+  Snapshot date: 2026-05-02
+  Tasks completed:
+    JP-34 [M2-T1] Targeting raycast — black wireframe outline highlights the block under the crosshair (5-block reach)
+    JP-35 [M2-T2] Left-click breaks the targeted block; per-block material disposed cleanly
+    JP-36 [M2-T3] Right-click places a grass block on the hit face; refuses to place inside the player's body
+    JP-37 [M2-T4] Procedural Web Audio "crack" on break and "thud" on place (no external files)
+    JP-38 [M2-T5] This release tag
+
+  Built on top of v1 Foundation (sky, grass field, WASD, mouse-look).
+
+  How to run: open this file directly in Chrome. No server required.
+  Rollback safety net — do not edit. Active work continues in game.html.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Jaxx's BlockVenture</title>
+  <style>
+    /* Make the canvas fill the whole browser window with no scrollbars. */
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #87CEEB; }
+    canvas { display: block; }
+
+    /* "Click to play" overlay — shown when the pointer isn't locked. */
+    #overlay {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0, 0, 0, 0.45);
+      color: white;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 32px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      user-select: none;
+      text-align: center;
+      padding: 20px;
+    }
+    #overlay.hidden { display: none; }
+    #overlay small {
+      display: block;
+      margin-top: 12px;
+      font-size: 16px;
+      font-weight: 400;
+      opacity: 0.85;
+    }
+
+    /* Tiny crosshair so the player knows where they're aiming. */
+    #crosshair {
+      position: fixed;
+      left: 50%; top: 50%;
+      width: 14px; height: 14px;
+      margin-left: -7px; margin-top: -7px;
+      pointer-events: none;
+      opacity: 0.9;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ""; position: absolute; background: white;
+      box-shadow: 0 0 2px rgba(0,0,0,0.6);
+    }
+    #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+    #crosshair::after  { left: 0; top: 6px; width: 14px; height: 2px; }
+  </style>
+
+  <!-- Importmap: tells the browser where to find the "three" module.
+       Pinned to version 0.160.0 so future Three.js updates can't break our game. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- Click-to-play overlay. Hidden when pointer is locked. -->
+  <div id="overlay">
+    Click to play
+    <small>Move: W A S D &nbsp;·&nbsp; Look: mouse &nbsp;·&nbsp; Esc to release</small>
+  </div>
+
+  <!-- Crosshair in the centre of the screen. -->
+  <div id="crosshair"></div>
+
+  <!-- Main game script. type="module" is required for importmap to work. -->
+  <script type="module">
+    import * as THREE from 'three';
+
+    console.log('Three.js loaded', THREE.REVISION);
+
+    // ---------------------------------------------------------------------
+    // Scene, camera, renderer
+    // ---------------------------------------------------------------------
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB); // sky blue
+
+    const camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    const EYE_HEIGHT = 2.2;
+    camera.position.set(0, EYE_HEIGHT, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // ---------------------------------------------------------------------
+    // Lights
+    // ---------------------------------------------------------------------
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+    sun.position.set(20, 30, 10);
+    scene.add(sun);
+
+    // ---------------------------------------------------------------------
+    // World — 20x20 flat grass field, stored in a Group + a coord Map.
+    // ---------------------------------------------------------------------
+    // The Group holds every block mesh. Putting blocks in a group lets us
+    // raycast against only the blocks (instead of every object in the scene).
+    // The Map lets us instantly look up "is there a block at (x,y,z)?" by
+    // its integer grid coordinate — needed soon for placing and breaking.
+    const blocksGroup = new THREE.Group();
+    scene.add(blocksGroup);
+    const blockMap = new Map();
+    const coordKey = (x, y, z) => `${x},${y},${z}`;
+
+    const blockGeo = new THREE.BoxGeometry(1, 1, 1);
+    const WORLD_SIZE = 20;
+    const offset = (WORLD_SIZE - 1) / 2;
+    const grassA = 0x4CAF50;
+    const grassB = 0x43A047;
+
+    function addBlock(gx, gy, gz, color) {
+      const mat = new THREE.MeshStandardMaterial({ color });
+      const block = new THREE.Mesh(blockGeo, mat);
+      block.position.set(gx, gy, gz);
+      // Stash the grid coordinate on the mesh so handlers (raycast hit,
+      // break, place) can find it without doing math on the position.
+      block.userData.coord = { x: gx, y: gy, z: gz };
+      blocksGroup.add(block);
+      blockMap.set(coordKey(gx, gy, gz), block);
+      return block;
+    }
+
+    for (let x = 0; x < WORLD_SIZE; x++) {
+      for (let z = 0; z < WORLD_SIZE; z++) {
+        const isLight = (x + z) % 2 === 0;
+        addBlock(x - offset, 0, z - offset, isLight ? grassA : grassB);
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Audio — procedural break ("crack") and place ("thud") sounds
+    // ---------------------------------------------------------------------
+    // Generated with the Web Audio API instead of loading external files,
+    // so there are no broken-URL risks and we control the volume exactly.
+    // Master gain is intentionally low — kid ears, not arcade volume.
+    let audioCtx = null;
+    let masterGain = null;
+
+    // Browsers block AudioContext until a user gesture. We create it on
+    // the first interaction, then reuse for every sound after that.
+    function ensureAudio() {
+      if (audioCtx) return audioCtx;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new Ctx();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = 0.35; // moderate, kid-friendly
+      masterGain.connect(audioCtx.destination);
+      return audioCtx;
+    }
+
+    // Short low-frequency thump for placing a block.
+    function playThud() {
+      const ctx = ensureAudio();
+      const t0 = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = 'sine';
+      // Pitch sweeps from 140 Hz down to 70 Hz over ~80ms — that drop is
+      // what makes a sound feel like "landing".
+      osc.frequency.setValueAtTime(140, t0);
+      osc.frequency.exponentialRampToValueAtTime(70, t0 + 0.08);
+      env.gain.setValueAtTime(0.0001, t0);
+      env.gain.exponentialRampToValueAtTime(0.6, t0 + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+      osc.connect(env).connect(masterGain);
+      osc.start(t0);
+      osc.stop(t0 + 0.2);
+    }
+
+    // Short noisy crack for breaking a block.
+    function playCrack() {
+      const ctx = ensureAudio();
+      const t0 = ctx.currentTime;
+      // Build a tiny buffer of white noise and play it through a bandpass
+      // filter — that gives the "earthy crack" character without needing
+      // an actual sample file.
+      const buf = ctx.createBuffer(1, ctx.sampleRate * 0.12, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1800;
+      filter.Q.value = 0.9;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0001, t0);
+      env.gain.exponentialRampToValueAtTime(0.5, t0 + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+      src.connect(filter).connect(env).connect(masterGain);
+      src.start(t0);
+      src.stop(t0 + 0.13);
+    }
+
+    // ---------------------------------------------------------------------
+    // Targeting — raycast from camera each frame, highlight the hit block
+    // ---------------------------------------------------------------------
+    // Reach: how far the player can interact. ~5 blocks is the classic
+    // Minecraft feel and keeps the raycast cheap.
+    const REACH = 5;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.far = REACH;
+    // Ray starts at the centre of the screen (camera direction).
+    const screenCentre = new THREE.Vector2(0, 0);
+
+    // Highlight = a wireframe outline of a 1x1x1 cube, slightly inflated so
+    // its lines sit just outside the block surface (no z-fighting). It's
+    // hidden when the player isn't looking at any block.
+    const highlightEdges = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02, 1.02, 1.02));
+    const highlightMat = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+    const highlight = new THREE.LineSegments(highlightEdges, highlightMat);
+    highlight.visible = false;
+    scene.add(highlight);
+
+    // The currently-targeted block, plus the face normal of the hit so we
+    // know which side the player is looking at (used by place-block).
+    let targetedBlock = null;
+    const targetedNormal = new THREE.Vector3();
+
+    function updateTarget() {
+      raycaster.setFromCamera(screenCentre, camera);
+      // Only check the blocks group — never the highlight mesh.
+      const hits = raycaster.intersectObjects(blocksGroup.children, false);
+      if (hits.length > 0) {
+        targetedBlock = hits[0].object;
+        // face.normal is in local space; blocks aren't rotated so it
+        // matches world space directly. Round to integers (-1, 0, or 1)
+        // to avoid floating-point noise from confusing neighbour math.
+        targetedNormal.copy(hits[0].face.normal).round();
+        highlight.position.copy(targetedBlock.position);
+        highlight.visible = true;
+      } else {
+        targetedBlock = null;
+        highlight.visible = false;
+      }
+    }
+
+    // Remove a block from the world cleanly: detach the mesh, drop it from
+    // the lookup map, and free its per-block material. We deliberately do
+    // NOT dispose `blockGeo` — it's a single shared geometry used by every
+    // block, so disposing it once would break every remaining block.
+    function removeBlock(block) {
+      const { x, y, z } = block.userData.coord;
+      blocksGroup.remove(block);
+      blockMap.delete(coordKey(x, y, z));
+      block.material.dispose();
+    }
+
+    // Refuse to place a block that would overlap the player's body.
+    // Player is approximated as an axis-aligned box: ~0.6 wide, 1.7 tall,
+    // with feet at (camera.y - 1.7) and head at camera.y.
+    const PLAYER_HALF = 0.3;
+    function blockOverlapsPlayer(bx, by, bz) {
+      const p = camera.position;
+      const feet = p.y - 1.7;
+      const head = p.y;
+      return Math.abs(bx - p.x) < 0.5 + PLAYER_HALF &&
+             Math.abs(bz - p.z) < 0.5 + PLAYER_HALF &&
+             (by + 0.5) > feet &&
+             (by - 0.5) < head;
+    }
+
+    // Add a new grass block on the face of the currently-targeted block.
+    function placeBlock() {
+      if (!targetedBlock) return;
+      const { x, y, z } = targetedBlock.userData.coord;
+      const nx = x + targetedNormal.x;
+      const ny = y + targetedNormal.y;
+      const nz = z + targetedNormal.z;
+      // Don't place a duplicate (shouldn't happen, but cheap to guard).
+      if (blockMap.has(coordKey(nx, ny, nz))) return;
+      // Don't place a block on top of the player.
+      if (blockOverlapsPlayer(nx, ny, nz)) return;
+      // Use the same checkerboard rule so placed blocks blend in for now.
+      // M3 will replace this with proper block types from the registry.
+      const colour = ((nx + nz) % 2 + 2) % 2 === 0 ? grassA : grassB;
+      addBlock(nx, ny, nz, colour);
+    }
+
+    // ---------------------------------------------------------------------
+    // Mouse-look (pointer lock) — yaw/pitch driven by mouse movement
+    // ---------------------------------------------------------------------
+    let yaw = 0;
+    let pitch = 0;
+    const PITCH_LIMIT = Math.PI / 2 - 0.01;
+    const LOOK_SENSITIVITY = 0.002;
+
+    const overlay = document.getElementById('overlay');
+    const canvas = renderer.domElement;
+
+    overlay.addEventListener('click', () => canvas.requestPointerLock());
+
+    // Mouse-down on the canvas:
+    //   • If pointer isn't locked, lock it (left click only).
+    //   • If pointer IS locked, left click breaks, right click places.
+    canvas.addEventListener('mousedown', (e) => {
+      if (document.pointerLockElement !== canvas) {
+        if (e.button === 0) canvas.requestPointerLock();
+        return;
+      }
+      if (e.button === 0 && targetedBlock) {
+        // Hide the highlight immediately — it's about to be re-resolved on
+        // the next frame, but this stops a flicker on the now-deleted block.
+        highlight.visible = false;
+        removeBlock(targetedBlock);
+        targetedBlock = null;
+        playCrack();
+      } else if (e.button === 2) {
+        const before = blockMap.size;
+        placeBlock();
+        // Only play the "thud" if a block was actually placed (not blocked
+        // by the player's body or by hitting empty air).
+        if (blockMap.size > before) playThud();
+      }
+    });
+
+    // Suppress the right-click context menu so placing blocks isn't
+    // interrupted by the browser's native menu popping up.
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    document.addEventListener('pointerlockchange', () => {
+      const locked = document.pointerLockElement === canvas;
+      overlay.classList.toggle('hidden', locked);
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement !== canvas) return;
+      yaw   -= e.movementX * LOOK_SENSITIVITY;
+      pitch -= e.movementY * LOOK_SENSITIVITY;
+      if (pitch >  PITCH_LIMIT) pitch =  PITCH_LIMIT;
+      if (pitch < -PITCH_LIMIT) pitch = -PITCH_LIMIT;
+    });
+
+    // ---------------------------------------------------------------------
+    // Player input — track which keys are currently held
+    // ---------------------------------------------------------------------
+    const keys = { w: false, a: false, s: false, d: false };
+
+    window.addEventListener('keydown', (e) => {
+      const k = e.key.toLowerCase();
+      if (k in keys) keys[k] = true;
+    });
+    window.addEventListener('keyup', (e) => {
+      const k = e.key.toLowerCase();
+      if (k in keys) keys[k] = false;
+    });
+    window.addEventListener('blur', () => {
+      for (const k in keys) keys[k] = false;
+    });
+
+    // ---------------------------------------------------------------------
+    // Resize handling
+    // ---------------------------------------------------------------------
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ---------------------------------------------------------------------
+    // Render loop — apply look angles, move the player, update the target
+    // ---------------------------------------------------------------------
+    const MOVE_SPEED = 4;
+
+    const forward = new THREE.Vector3();
+    const right = new THREE.Vector3();
+    const move = new THREE.Vector3();
+    const UP = new THREE.Vector3(0, 1, 0);
+    const lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+    const clock = new THREE.Clock();
+
+    renderer.setAnimationLoop(() => {
+      const dt = Math.min(clock.getDelta(), 0.1);
+
+      lookEuler.set(pitch, yaw, 0);
+      camera.quaternion.setFromEuler(lookEuler);
+
+      camera.getWorldDirection(forward);
+      forward.y = 0;
+      forward.normalize();
+      right.crossVectors(forward, UP).normalize();
+
+      move.set(0, 0, 0);
+      if (keys.w) move.add(forward);
+      if (keys.s) move.sub(forward);
+      if (keys.d) move.add(right);
+      if (keys.a) move.sub(right);
+
+      if (move.lengthSq() > 0) {
+        move.normalize().multiplyScalar(MOVE_SPEED * dt);
+        camera.position.add(move);
+      }
+
+      if (camera.position.y < EYE_HEIGHT) camera.position.y = EYE_HEIGHT;
+
+      updateTarget();
+
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

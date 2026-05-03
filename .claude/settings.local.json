@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__052a4130-b0d1-42b2-9dab-6bd4acb6e750__get_issue",
+      "mcp__052a4130-b0d1-42b2-9dab-6bd4acb6e750__save_issue",
+      "mcp__052a4130-b0d1-42b2-9dab-6bd4acb6e750__get_document",
+      "mcp__Claude_Preview__preview_start",
+      "mcp__052a4130-b0d1-42b2-9dab-6bd4acb6e750__list_issues",
+      "mcp__052a4130-b0d1-42b2-9dab-6bd4acb6e750__list_milestones",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git config *)",
+      "Bash(git commit -m 'Initial commit: Jaxx World M1-M6 complete *)"
+    ]
+  }
+}

@@ -1,0 +1,828 @@
+<!--
+  Jaxx's BlockVenture — Release v4: World & Persistence (M4)
+  Snapshot date: 2026-05-02
+  Tasks completed:
+    JP-44 [M4-T1] InstancedMesh refactor — 64x64 world, 5 draw calls per type,
+                  swap-with-last add/remove, bounds invalidated on every change
+    JP-45 [M4-T2] Save button — serialises blockMap to localStorage with
+                  versioned format and toast confirmation
+    JP-46 [M4-T3] Load on startup — validates saved JSON, falls back to
+                  fresh flat world on missing/corrupt data
+    JP-47 [M4-T4] New World button — confirm() prompt, clears world + storage
+    JP-48 [M4-T5] This release tag
+
+  Built on top of v3 Hotbar (block registry, hotbar UI, per-block sounds).
+
+  How to run: open this file directly in Chrome. No server required.
+  Saves persist in your browser's localStorage under the key
+  `blockventure:world:default` — clear it from DevTools to start fresh
+  without using the in-game button.
+  Rollback safety net — do not edit. Active work continues in game.html.
+-->
+<!--
+  Jaxx's BlockVenture — Release v3: Building Tools (M3)
+  Snapshot date: 2026-05-02
+  Tasks completed:
+    JP-39 [M3-T1] Block registry — 5 types (Grass, Dirt, Stone, Wood, Sand) with cached materials
+    JP-40 [M3-T2] Hotbar UI — 5 slots at the bottom centre, selected slot lit
+    JP-41 [M3-T3] Hotbar selection — keys 1-5, mouse-wheel cycling with wrap
+    JP-42 [M3-T4] Per-block sounds — distinct stone, wood, sand profiles synthesised in Web Audio
+    JP-43 [M3-T5] This release tag
+
+  Built on top of v2 Interaction (raycast targeting, break, place, sounds).
+
+  How to run: open this file directly in Chrome. No server required.
+  Rollback safety net — do not edit. Active work continues in game.html.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Jaxx's BlockVenture</title>
+  <style>
+    /* Make the canvas fill the whole browser window with no scrollbars. */
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #87CEEB; }
+    canvas { display: block; }
+
+    /* "Click to play" overlay — shown when the pointer isn't locked. */
+    #overlay {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0, 0, 0, 0.45);
+      color: white;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 32px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      user-select: none;
+      text-align: center;
+      padding: 20px;
+    }
+    #overlay.hidden { display: none; }
+    #overlay small {
+      display: block;
+      margin-top: 12px;
+      font-size: 16px;
+      font-weight: 400;
+      opacity: 0.85;
+    }
+
+    /* Hotbar at the bottom of the screen — built dynamically in JS from
+       the BLOCKS registry so adding a block also adds a slot. */
+    #hotbar {
+      position: fixed;
+      left: 50%; bottom: 18px;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      pointer-events: none;     /* never intercept world clicks */
+      user-select: none;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .slot {
+      width: 56px; height: 70px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 2px solid rgba(255, 255, 255, 0.25);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding-top: 6px;
+      box-sizing: border-box;
+      transition: border-color 120ms, transform 120ms, box-shadow 120ms;
+    }
+    .slot.selected {
+      border-color: #fff;
+      box-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
+      transform: translateY(-3px);
+    }
+    .slot .swatch {
+      width: 36px; height: 36px;
+      border-radius: 4px;
+      box-shadow: inset 0 -6px 0 rgba(0,0,0,0.18), inset 0 4px 0 rgba(255,255,255,0.12);
+    }
+    .slot .label {
+      margin-top: 4px;
+      font-size: 11px;
+      color: white;
+      letter-spacing: 0.3px;
+    }
+    .slot .key {
+      position: absolute;
+      transform: translate(20px, -4px);
+      font-size: 10px;
+      color: rgba(255,255,255,0.7);
+      background: rgba(0,0,0,0.55);
+      border-radius: 3px;
+      padding: 1px 4px;
+    }
+
+    /* Top-right action buttons. Sit above the overlay so the player can hit
+       them while paused. When the pointer is locked the cursor is hidden,
+       so they can't be clicked accidentally during play. */
+    #actions {
+      position: fixed;
+      top: 14px; right: 14px;
+      display: flex;
+      gap: 8px;
+      z-index: 10;
+    }
+    #actions button {
+      padding: 9px 18px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      border-radius: 6px;
+      color: white;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      cursor: pointer;
+    }
+    #actions button:hover { border-color: white; background: rgba(0, 0, 0, 0.7); }
+    /* The reset button stands out a little because it's destructive. */
+    #new-btn { color: #ffd1d1; }
+
+    /* Transient confirmation toast that fades on its own. */
+    #toast {
+      position: fixed;
+      top: 60px; right: 14px;
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.7);
+      border-radius: 6px;
+      color: white;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      opacity: 0;
+      transition: opacity 0.4s;
+      pointer-events: none;
+      z-index: 11;
+    }
+    #toast.show { opacity: 1; }
+
+    /* Tiny crosshair so the player knows where they're aiming. */
+    #crosshair {
+      position: fixed;
+      left: 50%; top: 50%;
+      width: 14px; height: 14px;
+      margin-left: -7px; margin-top: -7px;
+      pointer-events: none;
+      opacity: 0.9;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ""; position: absolute; background: white;
+      box-shadow: 0 0 2px rgba(0,0,0,0.6);
+    }
+    #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+    #crosshair::after  { left: 0; top: 6px; width: 14px; height: 2px; }
+  </style>
+
+  <!-- Importmap: tells the browser where to find the "three" module.
+       Pinned to version 0.160.0 so future Three.js updates can't break our game. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- Click-to-play overlay. Hidden when pointer is locked. -->
+  <div id="overlay">
+    Click to play
+    <small>Move: W A S D &nbsp;·&nbsp; Look: mouse &nbsp;·&nbsp; Esc to release</small>
+  </div>
+
+  <!-- Crosshair in the centre of the screen. -->
+  <div id="crosshair"></div>
+
+  <!-- Hotbar — populated in JS from the BLOCKS registry. -->
+  <div id="hotbar"></div>
+
+  <!-- Top-right action buttons + confirmation toast. -->
+  <div id="actions">
+    <button id="save-btn" type="button">Save</button>
+    <button id="new-btn"  type="button">New World</button>
+  </div>
+  <div id="toast"></div>
+
+  <!-- Main game script. type="module" is required for importmap to work. -->
+  <script type="module">
+    import * as THREE from 'three';
+
+    console.log('Three.js loaded', THREE.REVISION);
+
+    // ---------------------------------------------------------------------
+    // Scene, camera, renderer
+    // ---------------------------------------------------------------------
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB); // sky blue
+
+    const camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    const EYE_HEIGHT = 2.2;
+    camera.position.set(0, EYE_HEIGHT, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // ---------------------------------------------------------------------
+    // Lights
+    // ---------------------------------------------------------------------
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+    sun.position.set(20, 30, 10);
+    scene.add(sun);
+
+    // ---------------------------------------------------------------------
+    // Block registry — every type of block in the world is defined here.
+    // ---------------------------------------------------------------------
+    // Adding a new block type is a single line in this object. Each entry
+    // is keyed by a numeric id so it serialises cleanly to disk in M4.
+    //   name          shown in the UI (hotbar)
+    //   color         flat colour for the cube (textures come in M5)
+    //   breakSound    name of the procedural sound to play on break
+    //   placeSound    name of the procedural sound to play on place
+    const BLOCKS = {
+      1: { name: 'Grass', color: 0x4CAF50, breakSound: 'crack',      placeSound: 'thud'      },
+      2: { name: 'Dirt',  color: 0x8D6E63, breakSound: 'crack',      placeSound: 'thud'      },
+      3: { name: 'Stone', color: 0x9E9E9E, breakSound: 'stoneCrack', placeSound: 'stoneThud' },
+      4: { name: 'Wood',  color: 0x8B5A2B, breakSound: 'woodCrack',  placeSound: 'woodThud'  },
+      5: { name: 'Sand',  color: 0xF4E1A4, breakSound: 'sandCrack',  placeSound: 'sandThud'  },
+    };
+    // Convenience constants so code reads "GRASS" instead of "1".
+    const GRASS = 1, DIRT = 2, STONE = 3, WOOD = 4, SAND = 5;
+
+    // One MeshStandardMaterial per block type — cached so 400 grass blocks
+    // share a single material object (cheaper, less GC pressure).
+    const blockMaterials = new Map();
+    function materialFor(blockId) {
+      let mat = blockMaterials.get(blockId);
+      if (!mat) {
+        mat = new THREE.MeshStandardMaterial({ color: BLOCKS[blockId].color });
+        blockMaterials.set(blockId, mat);
+      }
+      return mat;
+    }
+
+    // The block type the player is currently holding. JP-41 will let the
+    // player change it with the number keys / mouse wheel; for now it's
+    // hard-coded to Grass.
+    let selectedBlockId = GRASS;
+
+    // ---------------------------------------------------------------------
+    // Hotbar — one slot per entry in BLOCKS, built from the registry.
+    // ---------------------------------------------------------------------
+    // Slots are populated once at startup. The "selected" highlight is
+    // toggled whenever `selectedBlockId` changes via setSelectedBlock().
+    const hotbarEl = document.getElementById('hotbar');
+    const slotEls = new Map(); // blockId -> .slot DOM node
+
+    function hexToCss(hex) { return '#' + hex.toString(16).padStart(6, '0'); }
+
+    for (const id of Object.keys(BLOCKS)) {
+      const blockId = Number(id);
+      const def = BLOCKS[blockId];
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      slot.innerHTML = `
+        <span class="key">${blockId}</span>
+        <div class="swatch" style="background:${hexToCss(def.color)}"></div>
+        <div class="label">${def.name}</div>
+      `;
+      hotbarEl.appendChild(slot);
+      slotEls.set(blockId, slot);
+    }
+
+    function setSelectedBlock(blockId) {
+      if (!BLOCKS[blockId]) return;
+      selectedBlockId = blockId;
+      for (const [id, el] of slotEls) {
+        el.classList.toggle('selected', id === blockId);
+      }
+    }
+    setSelectedBlock(GRASS); // initial highlight
+
+    // ---------------------------------------------------------------------
+    // World — 64x64 grass field, rendered with InstancedMesh per type.
+    // ---------------------------------------------------------------------
+    // Architecture: one THREE.InstancedMesh per block type. Each block in
+    // the world is an *instance* on its type's mesh. The whole world thus
+    // becomes 5 draw calls (one per block type) instead of one per block —
+    // making 64x64 (4096 blocks) trivially smooth on integrated graphics.
+    //
+    // `blockMap` is the SOURCE OF TRUTH for the world: "x,y,z" -> { blockId,
+    // instanceId }. It's deliberately decoupled from the rendering data so
+    // JP-45 (save/load) can serialise it without touching Three.js objects.
+    //
+    // `instanceCoords` is the reverse lookup: per blockId, slot -> {x,y,z}.
+    // It's needed because raycasting an InstancedMesh returns an instanceId,
+    // and we need to translate that back to a world coordinate.
+    //
+    // Removing a block uses the standard "swap with last + decrement count"
+    // trick to keep the instance arrays tight without leaving gaps.
+    const blockGeo = new THREE.BoxGeometry(1, 1, 1);
+    const WORLD_SIZE = 64;
+    const offset = (WORLD_SIZE - 1) / 2;
+    const INSTANCES_PER_TYPE = 16384; // capacity per block type — plenty of headroom
+
+    const blockMap = new Map();
+    const coordKey = (x, y, z) => `${x},${y},${z}`;
+
+    const instancedMeshes = new Map(); // blockId -> InstancedMesh
+    const instanceCoords  = new Map(); // blockId -> array of {x,y,z}, indexed by instanceId
+    const instancedMeshList = [];      // pre-built array for raycaster.intersectObjects
+
+    const _tmpMatrix = new THREE.Matrix4();
+
+    for (const id of Object.keys(BLOCKS)) {
+      const blockId = Number(id);
+      const mesh = new THREE.InstancedMesh(blockGeo, materialFor(blockId), INSTANCES_PER_TYPE);
+      mesh.count = 0; // start with zero visible instances; grow as blocks are added
+      mesh.userData.blockId = blockId;
+      // The world fits in any reasonable view, so frustum culling per
+      // instance isn't worth the cost — disable it on the whole mesh.
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+      instancedMeshes.set(blockId, mesh);
+      instanceCoords.set(blockId, []);
+      instancedMeshList.push(mesh);
+    }
+
+    // Invalidate an InstancedMesh's bounding sphere after we change which
+    // instances exist. Three.js computes this sphere lazily and never re-
+    // computes it on its own — but the raycaster uses it to early-out, so
+    // a stale sphere means the ray will silently skip the whole mesh. Most
+    // visible symptom: blocks of a type that started empty (Stone, Dirt,
+    // Wood, Sand) couldn't be broken once placed. Setting it to null forces
+    // recomputation on the next raycast.
+    function invalidateBounds(mesh) {
+      mesh.boundingSphere = null;
+    }
+
+    function addBlock(gx, gy, gz, blockId) {
+      const key = coordKey(gx, gy, gz);
+      if (blockMap.has(key)) return;            // never duplicate
+      const mesh = instancedMeshes.get(blockId);
+      const slot = mesh.count;
+      if (slot >= INSTANCES_PER_TYPE) return;   // capacity guard
+      _tmpMatrix.makeTranslation(gx, gy, gz);
+      mesh.setMatrixAt(slot, _tmpMatrix);
+      mesh.count = slot + 1;
+      mesh.instanceMatrix.needsUpdate = true;
+      invalidateBounds(mesh);
+      instanceCoords.get(blockId)[slot] = { x: gx, y: gy, z: gz };
+      blockMap.set(key, { blockId, instanceId: slot });
+    }
+
+    function removeBlock(x, y, z) {
+      const key = coordKey(x, y, z);
+      const entry = blockMap.get(key);
+      if (!entry) return;
+      const { blockId, instanceId } = entry;
+      const mesh = instancedMeshes.get(blockId);
+      const coords = instanceCoords.get(blockId);
+      const lastId = mesh.count - 1;
+      // Swap-with-last so the active instances stay packed at the start of
+      // the array. Updates the moved block's instanceId in blockMap too.
+      if (instanceId !== lastId) {
+        mesh.getMatrixAt(lastId, _tmpMatrix);
+        mesh.setMatrixAt(instanceId, _tmpMatrix);
+        const moved = coords[lastId];
+        coords[instanceId] = moved;
+        blockMap.set(coordKey(moved.x, moved.y, moved.z), { blockId, instanceId });
+      }
+      coords.length = lastId;
+      mesh.count = lastId;
+      mesh.instanceMatrix.needsUpdate = true;
+      invalidateBounds(mesh);
+      blockMap.delete(key);
+    }
+
+    // Build a fresh flat 64x64 grass field. Used both on first run and as
+    // the fallback when saved data is missing or corrupt.
+    function generateFreshWorld() {
+      for (let x = 0; x < WORLD_SIZE; x++) {
+        for (let z = 0; z < WORLD_SIZE; z++) {
+          addBlock(x - offset, 0, z - offset, GRASS);
+        }
+      }
+    }
+
+    // Storage key used for both save (later in the file) and load (right
+    // here, on first run). Declared up-front so the world-load can use it
+    // before the rest of the persistence module is set up.
+    const SAVE_KEY = 'blockventure:world:default';
+
+    // Try to restore a saved world. Returns true if it loaded valid data.
+    // ANY problem (no save, JSON parse error, wrong shape, unknown blockId)
+    // results in returning false so the caller can fall back to a fresh
+    // world — the player should never see a crash from a bad save.
+    function loadSavedWorld() {
+      let raw;
+      try { raw = localStorage.getItem(SAVE_KEY); } catch (_) { return false; }
+      if (!raw) return false;
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch (_) { return false; }
+      if (!parsed || parsed.v !== 1 || !Array.isArray(parsed.blocks)) return false;
+      // Validate every entry before applying any of them — partial loads
+      // would leave the world in a confusing half-state.
+      for (const b of parsed.blocks) {
+        if (!Array.isArray(b) || b.length !== 4) return false;
+        const [x, y, z, id] = b;
+        if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') return false;
+        if (!BLOCKS[id]) return false;
+      }
+      for (const [x, y, z, id] of parsed.blocks) addBlock(x, y, z, id);
+      return true;
+    }
+
+    if (!loadSavedWorld()) generateFreshWorld();
+
+    // ---------------------------------------------------------------------
+    // Audio — procedural break ("crack") and place ("thud") sounds
+    // ---------------------------------------------------------------------
+    // Generated with the Web Audio API instead of loading external files,
+    // so there are no broken-URL risks and we control the volume exactly.
+    // Master gain is intentionally low — kid ears, not arcade volume.
+    let audioCtx = null;
+    let masterGain = null;
+
+    // Browsers block AudioContext until a user gesture. We create it on
+    // the first interaction, then reuse for every sound after that.
+    function ensureAudio() {
+      if (audioCtx) return audioCtx;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new Ctx();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = 0.35; // moderate, kid-friendly
+      masterGain.connect(audioCtx.destination);
+      return audioCtx;
+    }
+
+    // Helper: short oscillator hit with pitch sweep + amplitude envelope.
+    // Used as the building block for "thud"-style place sounds.
+    function thudHit({ type='sine', from, to, peak=0.6, length=0.18, sweep=0.08 }) {
+      const ctx = ensureAudio();
+      const t0 = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(from, t0);
+      osc.frequency.exponentialRampToValueAtTime(to, t0 + sweep);
+      env.gain.setValueAtTime(0.0001, t0);
+      env.gain.exponentialRampToValueAtTime(peak, t0 + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.0001, t0 + length);
+      osc.connect(env).connect(masterGain);
+      osc.start(t0);
+      osc.stop(t0 + length + 0.02);
+    }
+
+    // Helper: short filtered-noise burst. Used as the building block for
+    // "crack"-style break sounds.
+    function noiseBurst({ filterType='bandpass', freq=1800, Q=0.9, peak=0.5, length=0.12 }) {
+      const ctx = ensureAudio();
+      const t0 = ctx.currentTime;
+      const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * length)), ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const filter = ctx.createBiquadFilter();
+      filter.type = filterType;
+      filter.frequency.value = freq;
+      filter.Q.value = Q;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0001, t0);
+      env.gain.exponentialRampToValueAtTime(peak, t0 + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.0001, t0 + length);
+      src.connect(filter).connect(env).connect(masterGain);
+      src.start(t0);
+      src.stop(t0 + length + 0.01);
+    }
+
+    // Named sound recipes — each block type's break/place name in BLOCKS
+    // refers to one of these.
+    const SOUND_RECIPES = {
+      // Default earthy sounds (Grass, Dirt).
+      thud:       () => thudHit({ from: 140, to: 70 }),
+      crack:      () => noiseBurst({ freq: 1800, Q: 0.9 }),
+      // Stone — sharp, bright, slightly metallic.
+      stoneThud:  () => thudHit({ type: 'square', from: 220, to: 110, peak: 0.45, length: 0.12, sweep: 0.05 }),
+      stoneCrack: () => noiseBurst({ freq: 3200, Q: 1.6, length: 0.09 }),
+      // Wood — hollow, lower mid range, slightly longer ring.
+      woodThud:   () => thudHit({ from: 110, to: 55, length: 0.28, sweep: 0.12, peak: 0.55 }),
+      woodCrack:  () => noiseBurst({ freq: 800,  Q: 2.0, length: 0.13 }),
+      // Sand — soft whoosh, no sharp transient.
+      sandThud:   () => noiseBurst({ filterType: 'lowpass',  freq: 600,  Q: 0.6, peak: 0.35, length: 0.16 }),
+      sandCrack:  () => noiseBurst({ filterType: 'highpass', freq: 4000, Q: 0.6, peak: 0.30, length: 0.10 }),
+    };
+
+    function playSound(name) {
+      const recipe = SOUND_RECIPES[name];
+      if (recipe) recipe();
+    }
+
+    // Pre-warm the audio context after the first user click so the very
+    // first block sound has no startup delay. (Browsers require a gesture
+    // to create the context — see ensureAudio.)
+    window.addEventListener('mousedown', () => ensureAudio(), { once: true });
+
+    // ---------------------------------------------------------------------
+    // Targeting — raycast from camera each frame, highlight the hit block
+    // ---------------------------------------------------------------------
+    // Reach: how far the player can interact. ~5 blocks is the classic
+    // Minecraft feel and keeps the raycast cheap.
+    const REACH = 5;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.far = REACH;
+    // Ray starts at the centre of the screen (camera direction).
+    const screenCentre = new THREE.Vector2(0, 0);
+
+    // Highlight = a wireframe outline of a 1x1x1 cube, slightly inflated so
+    // its lines sit just outside the block surface (no z-fighting). It's
+    // hidden when the player isn't looking at any block.
+    const highlightEdges = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02, 1.02, 1.02));
+    const highlightMat = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+    const highlight = new THREE.LineSegments(highlightEdges, highlightMat);
+    highlight.visible = false;
+    scene.add(highlight);
+
+    // The currently-targeted block. Stored as plain coords + blockId rather
+    // than a mesh reference, since instances aren't first-class objects.
+    // Shape: { x, y, z, blockId } | null
+    let targetedBlock = null;
+    const targetedNormal = new THREE.Vector3();
+
+    function updateTarget() {
+      raycaster.setFromCamera(screenCentre, camera);
+      const hits = raycaster.intersectObjects(instancedMeshList, false);
+      if (hits.length > 0) {
+        const hit = hits[0];
+        const blockId = hit.object.userData.blockId;
+        const coord = instanceCoords.get(blockId)[hit.instanceId];
+        if (coord) {
+          targetedBlock = { x: coord.x, y: coord.y, z: coord.z, blockId };
+          // face.normal is in local space; cubes aren't rotated so it matches
+          // world space directly. Round to integers (-1/0/1) to avoid float
+          // noise from confusing neighbour math.
+          targetedNormal.copy(hit.face.normal).round();
+          highlight.position.set(coord.x, coord.y, coord.z);
+          highlight.visible = true;
+          return;
+        }
+      }
+      targetedBlock = null;
+      highlight.visible = false;
+    }
+
+    // Refuse to place a block that would overlap the player's body.
+    // Player is approximated as an axis-aligned box: ~0.6 wide, 1.7 tall,
+    // with feet at (camera.y - 1.7) and head at camera.y.
+    const PLAYER_HALF = 0.3;
+    function blockOverlapsPlayer(bx, by, bz) {
+      const p = camera.position;
+      const feet = p.y - 1.7;
+      const head = p.y;
+      return Math.abs(bx - p.x) < 0.5 + PLAYER_HALF &&
+             Math.abs(bz - p.z) < 0.5 + PLAYER_HALF &&
+             (by + 0.5) > feet &&
+             (by - 0.5) < head;
+    }
+
+    // Add the currently-selected block type on the face of the targeted block.
+    function placeBlock() {
+      if (!targetedBlock) return;
+      const nx = targetedBlock.x + targetedNormal.x;
+      const ny = targetedBlock.y + targetedNormal.y;
+      const nz = targetedBlock.z + targetedNormal.z;
+      // Don't place a duplicate (shouldn't happen, but cheap to guard).
+      if (blockMap.has(coordKey(nx, ny, nz))) return;
+      // Don't place a block on top of the player.
+      if (blockOverlapsPlayer(nx, ny, nz)) return;
+      addBlock(nx, ny, nz, selectedBlockId);
+    }
+
+    // ---------------------------------------------------------------------
+    // Persistence — save the world to localStorage on demand.
+    // ---------------------------------------------------------------------
+    // Storage shape: { v: 1, blocks: [[x, y, z, blockId], ...] }
+    // The "v" lets us migrate the format later without breaking old saves.
+    // SAVE_KEY is declared earlier (up next to loadSavedWorld) so it's in
+    // scope for both directions.
+
+    function serializeWorld() {
+      const blocks = [];
+      for (const [key, entry] of blockMap) {
+        const [x, y, z] = key.split(',').map(Number);
+        blocks.push([x, y, z, entry.blockId]);
+      }
+      return { v: 1, blocks };
+    }
+
+    // Toast helper — show a short message in the top-right that fades out.
+    const toastEl = document.getElementById('toast');
+    let toastTimer = null;
+    function showToast(msg, isError = false) {
+      toastEl.textContent = msg;
+      toastEl.style.color = isError ? '#ff8a8a' : 'white';
+      toastEl.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
+    }
+
+    function saveWorld() {
+      try {
+        const data = serializeWorld();
+        const json = JSON.stringify(data);
+        // localStorage CAN throw — quota exceeded, private browsing, disabled
+        // storage. We catch and surface the error in the toast.
+        localStorage.setItem(SAVE_KEY, json);
+        showToast(`Saved! ${data.blocks.length} blocks · ${(json.length / 1024).toFixed(0)} KB`);
+      } catch (err) {
+        console.error('save failed', err);
+        showToast(`Save failed: ${err.message}`, true);
+      }
+    }
+
+    document.getElementById('save-btn').addEventListener('click', saveWorld);
+
+    // Wipe every block from the world, leaving the rendering data in a
+    // clean state ready for repopulation.
+    function clearWorld() {
+      for (const mesh of instancedMeshList) {
+        mesh.count = 0;
+        mesh.instanceMatrix.needsUpdate = true;
+        invalidateBounds(mesh);
+      }
+      for (const arr of instanceCoords.values()) arr.length = 0;
+      blockMap.clear();
+    }
+
+    function resetWorld() {
+      // Native confirm() blocks the page until the user answers — perfect
+      // here since we want to be sure they meant it. M5 can swap this for
+      // a styled modal if it ever feels jarring.
+      if (!confirm('Start a new world? This will erase your current build.')) return;
+      clearWorld();
+      generateFreshWorld();
+      try { localStorage.removeItem(SAVE_KEY); } catch (_) { /* private mode etc. */ }
+      showToast('Fresh world ready');
+    }
+
+    document.getElementById('new-btn').addEventListener('click', resetWorld);
+
+    // ---------------------------------------------------------------------
+    // Mouse-look (pointer lock) — yaw/pitch driven by mouse movement
+    // ---------------------------------------------------------------------
+    let yaw = 0;
+    let pitch = 0;
+    const PITCH_LIMIT = Math.PI / 2 - 0.01;
+    const LOOK_SENSITIVITY = 0.002;
+
+    const overlay = document.getElementById('overlay');
+    const canvas = renderer.domElement;
+
+    overlay.addEventListener('click', () => canvas.requestPointerLock());
+
+    // Mouse-down on the canvas:
+    //   • If pointer isn't locked, lock it (left click only).
+    //   • If pointer IS locked, left click breaks, right click places.
+    canvas.addEventListener('mousedown', (e) => {
+      if (document.pointerLockElement !== canvas) {
+        if (e.button === 0) canvas.requestPointerLock();
+        return;
+      }
+      if (e.button === 0 && targetedBlock) {
+        // Hide the highlight immediately — it's about to be re-resolved on
+        // the next frame, but this stops a flicker on the now-deleted block.
+        highlight.visible = false;
+        const { x, y, z, blockId: brokenId } = targetedBlock;
+        removeBlock(x, y, z);
+        targetedBlock = null;
+        playSound(BLOCKS[brokenId].breakSound);
+      } else if (e.button === 2) {
+        const before = blockMap.size;
+        placeBlock();
+        // Only play the place sound if a block was actually placed (not
+        // blocked by the player's body or by hitting empty air).
+        if (blockMap.size > before) playSound(BLOCKS[selectedBlockId].placeSound);
+      }
+    });
+
+    // Suppress the right-click context menu so placing blocks isn't
+    // interrupted by the browser's native menu popping up.
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    document.addEventListener('pointerlockchange', () => {
+      const locked = document.pointerLockElement === canvas;
+      overlay.classList.toggle('hidden', locked);
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement !== canvas) return;
+      yaw   -= e.movementX * LOOK_SENSITIVITY;
+      pitch -= e.movementY * LOOK_SENSITIVITY;
+      if (pitch >  PITCH_LIMIT) pitch =  PITCH_LIMIT;
+      if (pitch < -PITCH_LIMIT) pitch = -PITCH_LIMIT;
+    });
+
+    // ---------------------------------------------------------------------
+    // Player input — track which keys are currently held
+    // ---------------------------------------------------------------------
+    const keys = { w: false, a: false, s: false, d: false };
+
+    // Ordered list of block IDs in the same order as the hotbar slots.
+    // Used by the mouse wheel to cycle previous / next.
+    const blockOrder = Object.keys(BLOCKS).map(Number);
+
+    window.addEventListener('keydown', (e) => {
+      const k = e.key.toLowerCase();
+      if (k in keys) keys[k] = true;
+      // Number keys 1-9 select the matching hotbar slot if it exists.
+      if (e.key >= '1' && e.key <= '9') {
+        const id = Number(e.key);
+        if (BLOCKS[id]) setSelectedBlock(id);
+      }
+    });
+
+    // Mouse wheel cycles through the hotbar (only when locked, so the
+    // overlay isn't accidentally scrolled when the menu is showing).
+    window.addEventListener('wheel', (e) => {
+      if (document.pointerLockElement !== canvas) return;
+      const idx = blockOrder.indexOf(selectedBlockId);
+      const dir = e.deltaY > 0 ? 1 : -1;
+      const next = (idx + dir + blockOrder.length) % blockOrder.length;
+      setSelectedBlock(blockOrder[next]);
+    }, { passive: true });
+    window.addEventListener('keyup', (e) => {
+      const k = e.key.toLowerCase();
+      if (k in keys) keys[k] = false;
+    });
+    window.addEventListener('blur', () => {
+      for (const k in keys) keys[k] = false;
+    });
+
+    // ---------------------------------------------------------------------
+    // Resize handling
+    // ---------------------------------------------------------------------
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ---------------------------------------------------------------------
+    // Render loop — apply look angles, move the player, update the target
+    // ---------------------------------------------------------------------
+    const MOVE_SPEED = 4;
+
+    const forward = new THREE.Vector3();
+    const right = new THREE.Vector3();
+    const move = new THREE.Vector3();
+    const UP = new THREE.Vector3(0, 1, 0);
+    const lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+    const clock = new THREE.Clock();
+
+    renderer.setAnimationLoop(() => {
+      const dt = Math.min(clock.getDelta(), 0.1);
+
+      lookEuler.set(pitch, yaw, 0);
+      camera.quaternion.setFromEuler(lookEuler);
+
+      camera.getWorldDirection(forward);
+      forward.y = 0;
+      forward.normalize();
+      right.crossVectors(forward, UP).normalize();
+
+      move.set(0, 0, 0);
+      if (keys.w) move.add(forward);
+      if (keys.s) move.sub(forward);
+      if (keys.d) move.add(right);
+      if (keys.a) move.sub(right);
+
+      if (move.lengthSq() > 0) {
+        move.normalize().multiplyScalar(MOVE_SPEED * dt);
+        camera.position.add(move);
+      }
+
+      if (camera.position.y < EYE_HEIGHT) camera.position.y = EYE_HEIGHT;
+
+      updateTarget();
+
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>
